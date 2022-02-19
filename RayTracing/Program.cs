@@ -12,24 +12,53 @@ namespace RayTracing
     {
         static void Main(string[] args)
         {
-            Renderer renderer = new Renderer(10, 2);
+            Renderer renderer = new Renderer(10, 100000, 4);
             object[,] pol = { { -1.0, 0, 0, -1.0, 1.0, 0, -1.0, 0, 1.0, 0xff, 0x00, 0x00, 1.0,1.0 },
                 { 1.0, 0, 0, 1.0, 0.0, 1.0, 1.0, 1.0, 0, 0x00, 0x00, 0xff, 1.0,1.0 },
-            { 0.0, 0, 0, 1.0, 0.0, 0.0, 0.0, 1.0, 0, 0x00, 0xff, 0x00, 1.0,1.0 }};
+            { -10.0, 0, 0, 10.0, 0.0, 0.0, 10.0, 10.0, 0, 0xff, 0xff, 0xff, 1.0,1.0 },
+            { 10.0, 10.0, 0, -10.0, 10.0, 0.0, -10.0, 0, 0, 0xff, 0xff, 0xff, 1.0,1.0 }};
             renderer.AddPolygons(pol);
-            object[,] lig = { { 0.0, 0.0, 5.0, 0.0, 3.0, 5.0, 3.0, 0.0, 5.0, 0xff, 0xff, 0xff, 1.0, 1.0, 100000 } };
+            object[,] lig = { { -1.0, 0.0, 2.0, 0.0, 1.0, 2.0, 1.0, 0.0, 2.0, 0xff, 0xff, 0xff, 1.0, 1.0, 1000 } };
             renderer.AddLights(lig);
-            object[,] screen = { { -1.0, -1.0, 0, -1.0, -1.0, 1.0, 1.0, -1.0, 0 },
+            /*object[,] screen = { { -1.0, -1.0, 0, -1.0, -1.0, 1.0, 1.0, -1.0, 0 },
             { -1.0, -1.0, 1.0, 1.0, -1.0, 1.0, 1.0, -1.0, 0 }};
 
-            renderer.AddScreen(screen);
-            renderer.FinishEvent += Renderer_FinishEvent;
+            renderer.AddScreen(screen);*/
+            renderer.SetCamera(new Camera() { P1 = new Point3D() { X = -1.0, Y = -1.0, Z = 0 }, P2 = new Point3D() { X = 1.0, Y = -1.0, Z = 1.0 }, Focus = new Point3D() { X = 0, Y = -2.0, Z = 0.5 } });
+            renderer.RayTracingFinishEvent += Renderer_FinishEvent;
+            renderer.ViewRayFinishEvent += Renderer_ViewRayFinishEvent;
             renderer.Render();
             Thread.Sleep(-1);
         }
 
-        private static void Renderer_FinishEvent(List<Pixel> pixels)
+        private static void Renderer_ViewRayFinishEvent(List<Pixel>[] pixelsarray)
         {
+
+            using (Image image = Image.FromFile("output.jpg"))
+            {
+                using (Graphics g = Graphics.FromImage(image))
+                {
+                    g.FillRectangle(Brushes.Black, 0, 0, 400, 400);
+                    foreach (var item in pixelsarray)
+                    {
+                        foreach (var pixel in item)
+                        {
+                            int x = (int)(pixel.Point.X * 200 + 200);
+                            int y = 200 - (int)(pixel.Point.Z * 200);
+                            //Console.WriteLine("{0} {1}", x, y);
+                            g.FillRectangle(new SolidBrush(Color.FromArgb(pixel.R, pixel.G, pixel.B)), x, y, 1, 1);
+                        }
+
+                    }
+                }
+                image.Save(DateTimeOffset.Now.ToUnixTimeSeconds() + ".jpg");
+            }
+            Console.WriteLine("ViewRay Threads Terminated");
+        }
+
+        private static void Renderer_FinishEvent()
+        {
+            /*
             using (Image image = Image.FromFile("output.jpg"))
             {
                 using (Graphics g = Graphics.FromImage(image))
@@ -44,6 +73,8 @@ namespace RayTracing
                 }
                 image.Save("output2.jpg");
             }
+            */
+            Console.WriteLine("All Threads Terminated");
 
 
         }
@@ -52,20 +83,30 @@ namespace RayTracing
 
 namespace TestRenderer
 {
-    public delegate void FinishDelegate(List<Pixel> pixels);
+    public delegate void RayTracingFinishDelegate();
+    public delegate void ViewRayFinishDelegate(List<Pixel>[] pixels);
     class Renderer
     {
-        public event FinishDelegate FinishEvent;
+        public event RayTracingFinishDelegate RayTracingFinishEvent;
+        public event ViewRayFinishDelegate ViewRayFinishEvent;
+        static Random random = new Random();
+        private int depth = 0;
         private int count = 0;
         private int thread = 0;
         private int threadCount = 0;
-        public Renderer(int count, int thread)
+        private Camera camera;
+        public Renderer(int depth, int count, int thread)
         {
+            this.depth = depth;
             this.count = count;
             this.thread = thread;
         }
         List<Polygon> polygons = new List<Polygon>();
         List<Light> lights = new List<Light>();
+        public void SetCamera(Camera c)
+        {
+            this.camera = c;
+        }
         public void AddPolygons(object[,] array)
         {
             for (int x = 0; x < array.GetLength(0); x++)
@@ -164,15 +205,14 @@ namespace TestRenderer
                 }
 
             }
-            PrepareForLoop(rays, count, thread);
+            PrepareForLoop(rays, depth, thread);
         }
-        public void PrepareForLoop(List<RayOfLight> rays, int count, int thread = 1)
+        public void PrepareForLoop(List<RayOfLight> rays, int depth, int thread = 1)
         {
             threadCount = thread;
             if (thread == 0)
             {
-                List<Pixel> pixels = new List<Pixel>();
-                LoopThread(rays, pixels, count, thread);
+                LoopThread(rays, depth, thread);
             }
             else
             {
@@ -190,8 +230,7 @@ namespace TestRenderer
                 {
                     Console.WriteLine(k);
                     int number = k;
-                    List<Pixel> pixels = new List<Pixel>();
-                    threads[k] = new Thread(() => { LoopThread(subRays[number], pixels, count, number); });
+                    threads[k] = new Thread(() => { LoopThread(subRays[number], depth, number); });
                 }
                 foreach (Thread t in threads)
                 {
@@ -200,90 +239,205 @@ namespace TestRenderer
             }
 
         }
-        public void LoopThread(List<RayOfLight> rays, List<Pixel> pixels, int count, int tNumber)
+        public void LoopThread(List<RayOfLight> rays, int depth, int tNumber)
         {
+            while (true)
             {
-                List<RayOfLight> temp = new List<RayOfLight>(rays);
-                foreach (var ray in temp)
                 {
-
-                    Point3D rayVector = ray.vector;
-                    Point3D pointOnLight = ray.start;
-                    double min = double.MaxValue;
-                    Polygon minP = null;
-                    Point3D shortestPoint = Point3D.ZeroVector;
-                    foreach (var p in polygons)
+                    List<RayOfLight> temp = new List<RayOfLight>(rays);
+                    foreach (var ray in temp)
                     {
-                        Point3D pVector = Polygon.GetOuterProduct(p);
-                        if (Point3D.InnerProduct(rayVector, pVector) < 0)
-                        {
-                            Point3D polygonPoint = Polygon.CrossPoint(p, pointOnLight, rayVector);
-                            if (polygonPoint == Point3D.ZeroVector)
-                            {
 
-                            }
-                            else
+                        Point3D rayVector = ray.vector;
+                        Point3D pointOnLight = ray.start;
+                        double min = double.MaxValue;
+                        Polygon minP = null;
+                        Point3D shortestPoint = Point3D.ZeroVector;
+                        foreach (var p in polygons)
+                        {
+                            Point3D pVector = Polygon.GetOuterProduct(p);
+                            if (Point3D.InnerProduct(rayVector, pVector) < 0)
                             {
-                                if (Polygon.isPointOnPolygon(p, polygonPoint))
+                                Point3D polygonPoint = Polygon.CrossPoint(p, pointOnLight, rayVector);
+                                if (polygonPoint == Point3D.ZeroVector)
                                 {
-                                    double distance = Point3D.Absolute(polygonPoint - pointOnLight);
-                                    if (distance < min)
+
+                                }
+                                else
+                                {
+                                    if (Polygon.isPointOnPolygon(p, polygonPoint))
                                     {
-                                        minP = p;
-                                        min = distance;
-                                        shortestPoint = polygonPoint;
+                                        double distance = Point3D.Absolute(polygonPoint - pointOnLight);
+                                        if (distance < min)
+                                        {
+                                            minP = p;
+                                            min = distance;
+                                            shortestPoint = polygonPoint;
+                                        }
                                     }
                                 }
                             }
                         }
+                        if (shortestPoint == Point3D.ZeroVector)
+                        {
+                            rays.Remove(ray);
+                        }
+                        /*else if (minP.GetType() == typeof(Screen))
+                        {
+                            double strength = -Point3D.InnerProduct(rayVector, Screen.DirectionVector(minP));
+                            Pixel p = new Pixel() { Point = new Point3D() { X = shortestPoint.X, Y = shortestPoint.Y, Z = shortestPoint.Z }, R = (byte)Math.Round(ray.R * strength), G = (byte)Math.Round(ray.G * strength), B = (byte)Math.Round(ray.B * strength) };
+                            pixels.Add(p);
+                            //Console.WriteLine("{0} {1} {2} {3} {4} {5}", shortestPoint.X, shortestPoint.Y, shortestPoint.Z, ray.R * strength, ray.G * strength, ray.B * strength);
+                            rays.Remove(ray);
+                        }*/
+                        else
+                        {
+                            ray.R = (byte)Math.Round((double)ray.R * ((double)minP.R / (double)255));
+                            ray.G = (byte)Math.Round((double)ray.G * ((double)minP.G / (double)255));
+                            ray.B = (byte)Math.Round((double)ray.B * ((double)minP.B / (double)255));
+                            ray.A *= minP.A;
+                            ray.start = shortestPoint;
+                            Point3D n = Polygon.DirectionVector(minP);
+                            Point3D vector = ray.vector - n * Point3D.InnerProduct(ray.vector, n) * 2;
+                            ray.vector = Point3D.RandomizedVector(vector, minP.Diffusion);
+                            minP.rays.Add(new RayOfLight(ray));
+                        }
                     }
-                    if (shortestPoint == Point3D.ZeroVector)
-                    {
-                        rays.Remove(ray);
-                    }
-                    /*else if (minP.GetType() == typeof(Screen))
-                    {
-                        double strength = -Point3D.InnerProduct(rayVector, Screen.DirectionVector(minP));
-                        Pixel p = new Pixel() { Point = new Point3D() { X = shortestPoint.X, Y = shortestPoint.Y, Z = shortestPoint.Z }, R = (byte)Math.Round(ray.R * strength), G = (byte)Math.Round(ray.G * strength), B = (byte)Math.Round(ray.B * strength) };
-                        pixels.Add(p);
-                        //Console.WriteLine("{0} {1} {2} {3} {4} {5}", shortestPoint.X, shortestPoint.Y, shortestPoint.Z, ray.R * strength, ray.G * strength, ray.B * strength);
-                        rays.Remove(ray);
-                    }*/
-                    else
-                    {
-                        ray.R = (byte)Math.Round((double)ray.R * ((double)minP.R / (double)255));
-                        ray.G = (byte)Math.Round((double)ray.G * ((double)minP.G / (double)255));
-                        ray.B = (byte)Math.Round((double)ray.B * ((double)minP.B / (double)255));
-                        ray.A *= minP.A;
-                        ray.start = shortestPoint;
-                        Point3D n = Polygon.DirectionVector(minP);
-                        Point3D vector = ray.vector - n * Point3D.InnerProduct(ray.vector, n) * 2;
-                        ray.vector = Point3D.RandomizedVector(vector, minP.Diffusion);
-                        minP.rays.Add(new RayOfLight(ray));
-                    }
-                }
 
-            }
-            if (count == 0 || rays.Count == 0)
-            {
-                Console.WriteLine("{0} : Thread Terminated", tNumber);
-                threadCount -= 1;
-                if (threadCount <= 0)
-                {
-                    FinishEvent(pixels);
                 }
-                return;
-            };
-            LoopThread(rays, pixels, count - 1, tNumber);
+                if (depth == 0 || rays.Count == 0)
+                {
+                    Console.WriteLine("{0} : Thread Terminated", tNumber);
+                    threadCount -= 1;
+                    if (threadCount <= 0)
+                    {
+                        RayTracingFinishEvent();
+                        ViewRender();
+                    }
+                    return;
+                };
+                depth -= 1;
+            }
+        }
+        private void ViewRender()
+        {
+            List<Pixel>[] pixels = new List<Pixel>[thread == 0 ? 1 : thread];
+            List<RayOfCamera>[] rays = new List<RayOfCamera>[thread == 0 ? 1 : thread];
+            for (int i = 0; i < thread; i++)
+            {
+                rays[i] = new List<RayOfCamera>();
+                pixels[i] = new List<Pixel>();
+            }
+            threadCount = thread;
+            for (int c = 0; c < count; c++)
+            {
+                double X = random.NextDouble() * (camera.P2.X - camera.P1.X) + camera.P1.X;
+                double Y = random.NextDouble() * (camera.P2.Y - camera.P1.Y) + camera.P1.Y;
+                double Z = random.NextDouble() * (camera.P2.Z - camera.P1.Z) + camera.P1.Z;
+                Point3D dir = new Point3D() { X = X, Y = Y, Z = Z };
+
+                RayOfCamera ray = new RayOfCamera() { focus = camera.Focus, pixel = dir, vector = Point3D.Normalize(dir - camera.Focus) };
+                if (thread == 0)
+                {
+                    rays[0].Add(ray);
+                }
+                else
+                {
+                    rays[c % thread].Add(ray);
+                }
+            }
+            if (thread == 0)
+            {
+                ViewRenderThread(pixels, rays[0], 0);
+            }
+            for (int i = 0; i < thread; i++)
+            {
+                int n = i;
+                Thread t = new Thread(() => { ViewRenderThread(pixels, rays[n], n); });
+                t.Start();
+            }
+        }
+        private void ViewRenderThread(List<Pixel>[] pixelsarray, List<RayOfCamera> rays, int tNumber)
+        {
+            List<Pixel> pixels = pixelsarray[tNumber];
+            Console.WriteLine("{0}:{1}", tNumber, rays.Count);
+            int debug = 0;
+            foreach (var ray in rays)
+            {
+                if (++debug % 100 == 0) Console.WriteLine("{0}:{1}", tNumber, debug);
+                Point3D rayVector = ray.vector;
+                Point3D sVector = ray.focus;
+                double min = double.MaxValue;
+                Polygon minP = null;
+                Point3D shortestPoint = Point3D.ZeroVector;
+                foreach (var p in polygons)
+                {
+                    Point3D pVector = Polygon.GetOuterProduct(p);
+                    if (Point3D.InnerProduct(rayVector, pVector) < 0)
+                    {
+                        Point3D polygonPoint = Polygon.CrossPoint(p, sVector, rayVector);
+                        if (polygonPoint == Point3D.ZeroVector)
+                        {
+
+                        }
+                        else
+                        {
+                            if (Polygon.isPointOnPolygon(p, polygonPoint))
+                            {
+                                double distance = Point3D.Absolute(polygonPoint - sVector);
+                                if (distance < min)
+                                {
+                                    minP = p;
+                                    min = distance;
+                                    shortestPoint = polygonPoint;
+                                }
+                            }
+                        }
+                    }
+                }
+                if (shortestPoint == Point3D.ZeroVector)
+                {
+                }
+                else
+                {
+                    int removed = minP.rays.RemoveAll(r => r == null);
+                    if (removed > 0) Console.WriteLine(removed);
+                    var mins = new List<RayOfLight>(minP.rays.OrderBy(r => Point3D.Absolute(r.start - shortestPoint)));
+                    double R = 0;
+                    double G = 0;
+                    double B = 0;
+                    double w = 0;
+                    for (int i = 0; i < (mins.Count <= 5 ? mins.Count : 5); i++)
+                    {
+                        w = -Point3D.InnerProduct(ray.vector, mins[i].vector);
+                        R += w * mins[i].A * mins[i].R;
+                        G += w * mins[i].A * mins[i].G;
+                        B += w * mins[i].A * mins[i].B;
+
+                    }
+                    R /= 5;
+                    G /= 5;
+                    B /= 5;
+                    Pixel p = new Pixel() { R = (byte)Math.Round(R), G = (byte)Math.Round(G), B = (byte)Math.Round(B), Point = ray.pixel };
+                    pixels.Add(p);
+                }
+            }
+            Console.WriteLine("{0} : Thread Terminated", tNumber);
+            threadCount -= 1;
+            if (threadCount <= 0)
+            {
+                ViewRayFinishEvent(pixelsarray);
+            }
+            return;
         }
     }
-    /*public class Pixel
+    public class Pixel
     {
         public byte R;
         public byte G;
         public byte B;
         public Point3D Point;
-    }*/
+    }
     public class Point3D
     {
         static Random random = new Random();
@@ -378,6 +532,22 @@ namespace TestRenderer
             this.G = ray.G;
             this.B = ray.B;
             this.A = ray.A;
+        }
+    }
+    class RayOfCamera
+    {
+        public Point3D vector;
+        public Point3D focus;
+        public Point3D pixel;
+        public RayOfCamera()
+        {
+
+        }
+        public RayOfCamera(RayOfCamera ray)
+        {
+            this.vector = new Point3D(ray.vector);
+            this.focus = new Point3D(ray.focus);
+            this.pixel = new Point3D(ray.pixel);
         }
     }
     class Polygon
